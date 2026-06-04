@@ -27,16 +27,26 @@ jobs:
                 builtin_libpng=yes builtin_zlib=yes \
                 use_llvm=yes ios_simulator=no
 
-      - name: Create .ipa bundle
+      - name: Locate and copy static library
         run: |
-          # Create app bundle directory
+          # Find the generated .a file (Godot 3.6 names it like libgodot.ios.debug.arm64.a)
+          LIB_PATH=$(find bin -name "*.a" | head -n 1)
+          if [ -z "$LIB_PATH" ]; then
+            echo "ERROR: No static library found in bin/"
+            ls -la bin/
+            exit 1
+          fi
+          echo "Found library: $LIB_PATH"
+          
+          # Create app bundle
           APP_DIR="Payload/Godot.app"
           mkdir -p "$APP_DIR"
+          cp "$LIB_PATH" "$APP_DIR/Godot"
+
+      - name: Create Info.plist and main.m stub
+        run: |
+          APP_DIR="Payload/Godot.app"
           
-          # Copy the static library (rename to executable name)
-          cp bin/libgodot.ios.opt.debug.arm64.a "$APP_DIR/Godot"
-          
-          # Create Info.plist
           cat > "$APP_DIR/Info.plist" <<EOF
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -53,7 +63,6 @@ jobs:
           </plist>
           EOF
           
-          # Write a minimal main.m stub that calls UIApplicationMain
           cat > main.m <<EOF
           #import <UIKit/UIKit.h>
           @interface GodotAppDelegate : UIResponder <UIApplicationDelegate>
@@ -69,22 +78,25 @@ jobs:
               }
           }
           EOF
-          
-          # Compile the stub and link with Godot static library
+
+      - name: Compile and link
+        run: |
+          APP_DIR="Payload/Godot.app"
           SDKROOT=$(xcrun --sdk iphoneos --show-sdk-path)
           clang -arch arm64 -isysroot "$SDKROOT" -miphoneos-version-min=12.0 \
                 -framework UIKit -framework OpenGLES -framework Metal \
                 -framework CoreAudio -framework Foundation -framework QuartzCore \
                 main.m "$APP_DIR/Godot" -o "$APP_DIR/Godot"
           
-          # Ad-hoc sign the executable
+          # Ad-hoc sign
           codesign -s - --entitlements - "$APP_DIR/Godot" <<EOF
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0"><dict><key>get-task-allow</key><false/></dict></plist>
           EOF
-          
-          # Zip into .ipa
+
+      - name: Package .ipa
+        run: |
           zip -r Godot-iOS.ipa Payload
 
       - name: Upload .ipa artifact

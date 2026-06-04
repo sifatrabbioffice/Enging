@@ -7,15 +7,14 @@ jobs:
   build:
     runs-on: macos-latest
     steps:
-      - name: Download Godot 3.4.2 editor and iOS templates
+      - name: Download Godot 3.5 editor and export templates
         run: |
-          # Use official downloads.tuxfamily.org (valid SSL, no -k needed)
-          curl -L -o godot.zip https://downloads.tuxfamily.org/godotengine/3.4.2/Godot_v3.4.2-stable_osx.universal.zip
+          curl -L -o godot.zip https://absinthe.tuxfamily.org/godotengine/3.5/Godot_v3.5-stable_osx.universal.zip
           unzip godot.zip
-          curl -L -o ios_templates.zip https://downloads.tuxfamily.org/godotengine/3.4.2/Godot_v3.4.2-stable_ios.template.zip
-          unzip ios_templates.zip
-          mkdir -p ~/Library/Application\ Support/Godot/templates/3.4.2.stable
-          cp -r iOS_*/* ~/Library/Application\ Support/Godot/templates/3.4.2.stable/
+          curl -L -o export_templates.tpz https://absinthe.tuxfamily.org/godotengine/3.5/Godot_v3.5-stable_export_templates.tpz
+          mkdir -p ~/Library/Application\ Support/Godot/templates/3.5.stable
+          unzip export_templates.tpz -d export_templates
+          cp -r export_templates/templates/* ~/Library/Application\ Support/Godot/templates/3.5.stable/
 
       - name: Create a simple 3D game project
         run: |

@@ -1,118 +1,120 @@
-name: Build Godot iOS 3D Game
+name: Build Godot iOS (Unsigned IPA)
 
 on:
-  push:
+  workflow_dispatch:
+    inputs:
+      godot_version:
+        description: 'Godot version (e.g., 4.2.2-stable)'
+        required: true
+        default: '4.2.2-stable'
 
 jobs:
-  build:
+  build-ipa:
     runs-on: macos-latest
     steps:
-      - name: Download Godot 3.5 editor and export templates
+      - name: Checkout Godot project
+        uses: actions/checkout@v4
+
+      - name: Setup Godot
         run: |
-          curl -L -o godot.zip https://absinthe.tuxfamily.org/godotengine/3.5/Godot_v3.5-stable_osx.universal.zip
-          unzip godot.zip
-          curl -L -o export_templates.tpz https://absinthe.tuxfamily.org/godotengine/3.5/Godot_v3.5-stable_export_templates.tpz
-          mkdir -p ~/Library/Application\ Support/Godot/templates/3.5.stable
-          unzip -q export_templates.tpz -d export_templates
-          cp -r export_templates/templates/* ~/Library/Application\ Support/Godot/templates/3.5.stable/
+          VERSION="${{ github.event.inputs.godot_version }}"
+          GODOT_BIN="Godot.app/Contents/MacOS/Godot"
+          # Download headless macOS editor
+          curl -L -o Godot.zip "https://github.com/godotengine/godot/releases/download/${VERSION}/Godot_v${VERSION}_macos.universal.zip"
+          unzip Godot.zip
+          mv Godot.app /Applications/Godot.app
+          chmod +x /Applications/$GODOT_BIN
+          # Download iOS export templates
+          mkdir -p ~/Library/Application\ Support/Godot/templates/${VERSION}
+          curl -L -o templates.zip "https://github.com/godotengine/godot/releases/download/${VERSION}/Godot_v${VERSION}_export_templates.tpz"
+          unzip templates.zip -d ~/Library/Application\ Support/Godot/templates/${VERSION}
+          mv ~/Library/Application\ Support/Godot/templates/${VERSION}/templates/* ~/Library/Application\ Support/Godot/templates/${VERSION}/
+          rm -rf ~/Library/Application\ Support/Godot/templates/${VERSION}/templates
 
-      - name: Create a simple 3D game project with export preset
+      - name: Export iOS Xcode project
         run: |
-          mkdir MyGame
-          cat > MyGame/project.godot <<'EOF'
-          [application]
-          config/name="RotatingCube"
-          run/main_scene="res://Main.tscn"
-
-          [display]
-          window/size/width=1024
-          window/size/height=768
-
-          [rendering]
-          quality/driver/driver_name="GLES3"
-          vram_compression/import_etc=true
-          EOF
-
-          cat > MyGame/Main.tscn <<'EOF'
-          [gd_scene load_steps=2 format=2]
-
-          [ext_resource path="res://cube.gd" type="Script" id=1]
-
-          [node name="Root" type="Spatial"]
-          script = ExtResource(1)
-
-          [node name="Camera" type="Camera" parent="."]
-          transform = Transform(1,0,0, 0,1,0, 0,0,1, 0,2,5)
-          current = true
-
-          [node name="Cube" type="MeshInstance" parent="."]
-          mesh = SubResource(1)
-
-          [sub_resource type="CubeMesh" id=1]
-          material/0 = SubResource(2)
-
-          [sub_resource type="SpatialMaterial" id=2]
-          albedo_color = Color(1,0,0,1)
-          EOF
-
-          cat > MyGame/cube.gd <<'EOF'
-          extends Spatial
-          func _process(delta):
-              $Cube.rotate_y(delta)
-          EOF
-
-          # Create export_presets.cfg with iOS preset
-          cat > MyGame/export_presets.cfg <<'EOF'
+          # Ensure export_presets.cfg exists and has iOS configured (or create one)
+          # This minimal config assumes a project.godot in the root
+          mkdir -p build/ios
+          /Applications/Godot.app/Contents/MacOS/Godot --headless --export-release "iOS" build/ios/export.xcodeproj || true
+          # If you don't have an export preset named "iOS", adjust the name.
+          # Alternatively, generate a basic preset on the fly:
+          cat > export_presets.cfg <<EOF
           [preset.0]
           name="iOS"
           platform="iOS"
           runnable=true
+          custom_features=""
           export_filter="all_resources"
-          include_filter=[]
-          exclude_filter=[]
-          export_path=""
-
+          include_filter=""
+          exclude_filter=""
+          export_path="build/ios/export"
+          script_export_mode=1
+          script_encryption_key=""
           [preset.0.options]
           custom_template/debug=""
           custom_template/release=""
-          architecture="arm64"
-          code_sign_identity="iPhone Developer"
-          export_icons_png=true
-          export_icons_macos=false
-          info_plist=""
-          info_plist_text="<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n<key>CFBundleIdentifier</key>\n<string>com.example.rotatingcube</string>\n<key>CFBundleName</key>\n<string>RotatingCube</string>\n<key>CFBundleVersion</key>\n<string>1.0</string>\n<key>CFBundleShortVersionString</key>\n<string>1.0</string>\n<key>UIRequiredDeviceCapabilities</key>\n<array>\n<string>armv7</string>\n</array>\n<key>UIDeviceFamily</key>\n<array>\n<integer>1</integer>\n<integer>2</integer>\n</array>\n</dict>\n</plist>"
-          info_plist_text_base64=""
-          ios/app_store_team_id=""
-          ios/code_sign_identity=""
-          ios/provisioning_profile_uuid=""
+          architectures="arm64"
+          application/app_store_team_id=""
+          application/provisioning_profile_uuid_debug=""
+          application/code_sign_identity_debug=""
+          application/export_method_debug="1"
+          application/provisioning_profile_uuid_release=""
+          application/code_sign_identity_release=""
+          application/export_method_release="1"
+          application/targeted_device_family="1"
+          application/name="MyGame"
+          application/info_plist_properties=""
+          application/icon_interpolation="4"
+          text_embed/embed_pck=false
+          capabilities/access_wifi=false
+          capabilities/push_notifications=false
+          user_data/accessible_from_files_app=false
+          user_data/accessible_from_itunes_sharing=false
+          privacy/camera_usage_description=""
+          privacy/microphone_usage_description=""
+          privacy/photolibrary_usage_description=""
+          privacy/file_timestamp_usage_description=""
+          privacy/location_usage_description=""
+          privacy/address_book_usage_description=""
+          privacy/calendar_usage_description=""
+          privacy/motion_usage_description=""
+          privacy/bluetooth_usage_description=""
+          privacy/bluetooth_always_usage_description=""
+          privacy/faceid_usage_description=""
+          privacy/speech_recognition_usage_description=""
+          privacy/health_share_usage_description=""
+          privacy/health_update_usage_description=""
+          privacy/homekit_usage_description=""
+          privacy/media_library_usage_description=""
+          privacy/nfc_usage_description=""
+          privacy/siri_usage_description=""
+          privacy/tracking_usage_description=""
           EOF
+          /Applications/Godot.app/Contents/MacOS/Godot --headless --export-release "iOS" build/ios/export.xcodeproj
 
-      - name: Export iOS Xcode project
+      - name: Build unsigned IPA
         run: |
-          mkdir -p export
-          chmod +x Godot.app/Contents/MacOS/Godot
-          ./Godot.app/Contents/MacOS/Godot --path MyGame --export "iOS" export/MyGame.xcodeproj
+          cd build/ios
+          # The exported folder is actually an .xcodeproj inside a directory; adjust if needed
+          # Godot exports a folder containing a .xcodeproj. We assume it's at build/ios/export.xcodeproj
+          xcodebuild -project export.xcodeproj \
+            -scheme MyGame \
+            -sdk iphoneos \
+            -configuration Release \
+            -archivePath ./export.xcarchive \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            archive
+          # Create unsigned IPA from archive
+          mkdir Payload
+          cp -R ./export.xcarchive/Products/Applications/MyGame.app Payload/
+          zip -r ../MyGame.ipa Payload
+          rm -rf Payload
 
-      - name: Build .ipa from Xcode project
-        run: |
-          cd export
-          xcodebuild -project MyGame.xcodeproj -scheme MyGame -configuration Release \
-                     -sdk iphoneos -archivePath MyGame.xcarchive archive
-          cat > exportOptions.plist <<EOF
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-            <key>method</key><string>development</string>
-            <key>provisioningProfiles</key><dict/>
-          </dict>
-          </plist>
-          EOF
-          xcodebuild -exportArchive -archivePath MyGame.xcarchive -exportPath output \
-                     -exportOptionsPlist exportOptions.plist
-
-      - name: Upload .ipa artifact
+      - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
         with:
-          name: RotatingCube.ipa
-          path: export/output/*.ipa
+          name: unsigned-ipa
+          path: build/MyGame.ipa

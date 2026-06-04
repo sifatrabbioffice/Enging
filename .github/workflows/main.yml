@@ -1,7 +1,8 @@
 name: Build Godot iOS 3D Game
 
 on:
-  workflow_dispatch:
+ push:
+  
 
 jobs:
   build:

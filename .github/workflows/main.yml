@@ -1,4 +1,4 @@
-name: Build Godot iOS (Unsigned IPA)
+name: Build Godot iOS IPA (Unsigned)
 
 on:
   workflow_dispatch:
@@ -7,112 +7,78 @@ on:
         description: 'Godot version (e.g., 4.2.2-stable)'
         required: true
         default: '4.2.2-stable'
+      app_name:
+        description: 'App name (must match your project name, used in Xcode scheme)'
+        required: true
+        default: 'MyGame'
 
 jobs:
-  build-ipa:
+  build:
     runs-on: macos-latest
     steps:
-      - name: Checkout Godot project
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Godot
+      - name: Setup Godot and iOS templates
         run: |
-          VERSION="${{ github.event.inputs.godot_version }}"
-          # Download headless macOS editor
-          curl -L -o Godot.zip "https://github.com/godotengine/godot/releases/download/${VERSION}/Godot_v${VERSION}_macos.universal.zip"
-          unzip Godot.zip
-          mv Godot.app /Applications/Godot.app
-          chmod +x /Applications/Godot.app/Contents/MacOS/Godot
+          VERSION="${{ inputs.godot_version }}"
+          # 1. Install Godot headless
+          curl -L -o godot.zip "https://github.com/godotengine/godot/releases/download/${VERSION}/Godot_v${VERSION}_macos.universal.zip"
+          unzip -o godot.zip
+          sudo mv Godot.app /Applications/
+          sudo chmod +x /Applications/Godot.app/Contents/MacOS/Godot
 
-          # Download iOS export templates into correct directory
-          TEMPLATE_DIR="$HOME/Library/Application Support/Godot/export_templates/${VERSION}"
-          mkdir -p "$TEMPLATE_DIR"
-          curl -L -o templates.zip "https://github.com/godotengine/godot/releases/download/${VERSION}/Godot_v${VERSION}_export_templates.tpz"
-          unzip templates.zip -d /tmp/templates_extract
-          mv /tmp/templates_extract/templates/* "$TEMPLATE_DIR/"
-          ls -la "$TEMPLATE_DIR"   # debug: should show ios.zip etc.
+          # 2. Prepare template directory (the path Godot 4 expects)
+          TEMPLATES_DIR="${HOME}/Library/Application Support/Godot/export_templates/${VERSION}"
+          mkdir -p "${TEMPLATES_DIR}"
 
-      - name: Prepare project for headless export
+          # 3. Download and extract templates correctly
+          curl -L -o templates.tpz "https://github.com/godotengine/godot/releases/download/${VERSION}/Godot_v${VERSION}_export_templates.tpz"
+          unzip -o templates.tpz -d /tmp/tpz
+          # The tpz unzips into a "templates/" folder; copy its contents
+          cp -R /tmp/tpz/templates/* "${TEMPLATES_DIR}/"
+          # Verify
+          ls -l "${TEMPLATES_DIR}/ios.zip"
+
+      - name: Prepare project
         run: |
-          # Remove any cached .godot folder that might be read-only (git tracked)
+          # Make project fully writable (avoid metadata save errors)
           rm -rf .godot
-          # Ensure the project directory is fully writable
           chmod -R u+w .
-          # Create a minimal export_presets.cfg if it doesn't exist
+
+          # If no export_presets.cfg, create a minimal iOS preset
           if [ ! -f export_presets.cfg ]; then
-            cat > export_presets.cfg <<'EOF'
+            APP_NAME="${{ inputs.app_name }}"
+            cat > export_presets.cfg <<EOF
 [preset.0]
 name="iOS"
 platform="iOS"
 runnable=true
-custom_features=""
 export_filter="all_resources"
-include_filter=""
-exclude_filter=""
 export_path="build/ios"
 script_export_mode=1
-script_encryption_key=""
 [preset.0.options]
-custom_template/debug=""
-custom_template/release=""
 architectures="arm64"
-application/app_store_team_id=""
-application/provisioning_profile_uuid_debug=""
-application/code_sign_identity_debug=""
+application/name="${APP_NAME}"
 application/export_method_debug="1"
-application/provisioning_profile_uuid_release=""
-application/code_sign_identity_release=""
 application/export_method_release="1"
 application/targeted_device_family="1"
-application/name="MyGame"
-application/info_plist_properties=""
-application/icon_interpolation="4"
-text_embed/embed_pck=false
-capabilities/access_wifi=false
-capabilities/push_notifications=false
-user_data/accessible_from_files_app=false
-user_data/accessible_from_itunes_sharing=false
-privacy/camera_usage_description=""
-privacy/microphone_usage_description=""
-privacy/photolibrary_usage_description=""
-privacy/file_timestamp_usage_description=""
-privacy/location_usage_description=""
-privacy/address_book_usage_description=""
-privacy/calendar_usage_description=""
-privacy/motion_usage_description=""
-privacy/bluetooth_usage_description=""
-privacy/bluetooth_always_usage_description=""
-privacy/faceid_usage_description=""
-privacy/speech_recognition_usage_description=""
-privacy/health_share_usage_description=""
-privacy/health_update_usage_description=""
-privacy/homekit_usage_description=""
-privacy/media_library_usage_description=""
-privacy/nfc_usage_description=""
-privacy/siri_usage_description=""
-privacy/tracking_usage_description=""
 EOF
           fi
 
-      - name: Export iOS Xcode project
+      - name: Export to Xcode project
         run: |
-          # Headless export to the directory build/ios (Godot will create an Xcode project inside)
           /Applications/Godot.app/Contents/MacOS/Godot --headless --export-release "iOS" build/ios
 
       - name: Build unsigned IPA
         run: |
+          APP_NAME="${{ inputs.app_name }}"
           # Locate the generated .xcodeproj
           XCPROJ=$(find build/ios -maxdepth 2 -name "*.xcodeproj" | head -1)
-          if [ -z "$XCPROJ" ]; then
-            echo "No Xcode project found!"
-            ls -R build/ios
-            exit 1
-          fi
-          echo "Found project: $XCPROJ"
+          echo "Using Xcode project: ${XCPROJ}"
 
-          # Build the archive without code signing
-          xcodebuild -project "$XCPROJ" \
-            -scheme MyGame \
+          # Archive without signing
+          xcodebuild -project "${XCPROJ}" \
+            -scheme "${APP_NAME}" \
             -sdk iphoneos \
             -configuration Release \
             -archivePath build/export.xcarchive \
@@ -121,14 +87,14 @@ EOF
             CODE_SIGN_IDENTITY="" \
             archive
 
-          # Package unsigned IPA
+          # Package IPA
           mkdir Payload
-          cp -R build/export.xcarchive/Products/Applications/MyGame.app Payload/
-          zip -r build/MyGame.ipa Payload
+          cp -R build/export.xcarchive/Products/Applications/${APP_NAME}.app Payload/
+          zip -r build/${APP_NAME}.ipa Payload
           rm -rf Payload
 
-      - name: Upload IPA artifact
+      - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: unsigned-ipa
-          path: build/MyGame.ipa
+          name: unsigned-ipa-${{ inputs.app_name }}
+          path: build/${{ inputs.app_name }}.ipa

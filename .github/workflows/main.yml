@@ -19,23 +19,25 @@ jobs:
           python -m pip install --upgrade pip
           pip install scons
 
-      - name: Build iOS static library (GLES3, no Vulkan)
+      - name: Build iOS static library (GLES3)
         run: |
           scons platform=ios target=release_debug \
                 tools=no arch=arm64 \
                 vulkan=no \
-                builtin_libpng=yes \
-                builtin_zlib=yes \
-                use_llvm=yes \
-                ios_simulator=no
+                builtin_libpng=yes builtin_zlib=yes \
+                use_llvm=yes ios_simulator=no
 
-      - name: Create minimal Xcode project and .ipa
+      - name: Create .ipa bundle
         run: |
-          # Create app bundle structure
-          mkdir -p Payload/Godot.app
-          cp -r bin/libgodot.ios.opt.debug.arm64.a Payload/Godot/
-          # Use a simple Info.plist
-          cat > Payload/Godot/Info.plist <<EOF
+          # Create app bundle directory
+          APP_DIR="Payload/Godot.app"
+          mkdir -p "$APP_DIR"
+          
+          # Copy the static library (rename to executable name)
+          cp bin/libgodot.ios.opt.debug.arm64.a "$APP_DIR/Godot"
+          
+          # Create Info.plist
+          cat > "$APP_DIR/Info.plist" <<EOF
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
@@ -50,28 +52,39 @@ jobs:
           </dict>
           </plist>
           EOF
-          # Compile a tiny stub main (actual engine entry point is in the .a)
-          cat > Payload/Godot/main.m <<EOF
+          
+          # Write a minimal main.m stub that calls UIApplicationMain
+          cat > main.m <<EOF
           #import <UIKit/UIKit.h>
+          @interface GodotAppDelegate : UIResponder <UIApplicationDelegate>
+          @end
+          @implementation GodotAppDelegate
+          - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
+              return YES;
+          }
+          @end
           int main(int argc, char *argv[]) {
               @autoreleasepool {
                   return UIApplicationMain(argc, argv, nil, @"GodotAppDelegate");
               }
           }
           EOF
-          # Compile stub and link with the Godot static library
-          clang -arch arm64 -isysroot $(xcrun --sdk iphoneos --show-sdk-path) \
-                -miphoneos-version-min=12.0 -framework UIKit -framework OpenGLES \
-                -framework Metal -framework CoreAudio -framework Foundation \
-                Payload/Godot/main.m bin/libgodot.ios.opt.debug.arm64.a \
-                -o Payload/Godot/Godot
-          # Sign (adhoc) and create .ipa
-          mkdir -p Payload/Godot/_CodeSignature
-          codesign -s - --entitlements - Payload/Godot/Godot <<EOF
+          
+          # Compile the stub and link with Godot static library
+          SDKROOT=$(xcrun --sdk iphoneos --show-sdk-path)
+          clang -arch arm64 -isysroot "$SDKROOT" -miphoneos-version-min=12.0 \
+                -framework UIKit -framework OpenGLES -framework Metal \
+                -framework CoreAudio -framework Foundation -framework QuartzCore \
+                main.m "$APP_DIR/Godot" -o "$APP_DIR/Godot"
+          
+          # Ad-hoc sign the executable
+          codesign -s - --entitlements - "$APP_DIR/Godot" <<EOF
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0"><dict><key>get-task-allow</key><false/></dict></plist>
           EOF
+          
+          # Zip into .ipa
           zip -r Godot-iOS.ipa Payload
 
       - name: Upload .ipa artifact

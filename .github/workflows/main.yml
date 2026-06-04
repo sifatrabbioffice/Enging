@@ -1,76 +1,99 @@
-name: Build Godot iOS Editor (Unsigned IPA)
+name: Build Godot Engine for iOS (Sideload Ready)
 
 on:
-  workflow_dispatch: # এটি আপনাকে গিটহাব থেকে ম্যানুয়ালি রান করার সুযোগ দেবে
+  workflow_dispatch:
+    inputs:
+      godot_version:
+        description: 'Godot Branch/Tag to clone'
+        required: true
+        default: '4.3-stable'
 
 jobs:
   build-ios:
-    runs-on: macos-14 # আইফোন ১৫ প্রো ম্যাক্স বা আধুনিক iOS আর্কিটেকচারের জন্য Xcode ১৫ এবং macOS ১৪ প্রয়োজন
+    runs-on: macos-14
+    
     steps:
-      - name: Checkout Source Code
-        uses: actions/checkout@v4
-        with:
-          repository: 'godotengine/godot' # অফিশিয়াল গোডট সোর্স কোড
-          ref: 'master' # অথবা আপনি চাইলে নির্দিষ্ট স্টেবল ভার্সন দিতে পারেন (যেমন: '4.2')
+    - name: Checkout Godot Source
+      uses: actions/checkout@v4
+      with:
+        repository: 'godotengine/godot'
+        ref: ${{ github.event.inputs.godot_version }}
 
-      - name: Setup Python and SCons
-        uses: actions/setup-python@v5
-        with:
-          python-python-version: '3.x'
+    - name: Set up Homebrew Dependencies
+      run: |
+        brew install scons python
 
-      - name: Install SCons and Dependencies
-        run: |
-          python -m pip install scons
-          brew install molten-vk # Vulkan rendering এর জন্য প্রয়োজন
+    - name: Cache SCons Dependencies
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/scons
+        key: ${{ runner.os }}-godot-ios-${{ github.event.inputs.godot_version }}
 
-      - name: Cache SCons Artifacts
-        uses: actions/cache@v4
-        with:
-          path: .scons_cache
-          key: ${{ runner.os }}-godot-ios-${{ github.ref }}
-          restore-keys: |
-            ${{ runner.os }}-godot-ios-
+    - name: Compile Godot for iOS (ARM64 Simulator/Device)
+      run: |
+        # Target ios, architecture arm64, editing support enabled (tools=yes)
+        # Note: Godot officially limits 'tools=yes' on iOS, but we force compilation flags here
+        scons platform=ios target=editor arch=arm64 tools=yes tests=no -j$(sysctl -n hw.logicalcpu)
 
-      - name: Compile Godot for iOS (Simulator & Device Libraries)
-        run: |
-          export SCONS_CACHE=.scons_cache
-          # আইফোনের আর্কিটেকচার (arm64) এর জন্য ইঞ্জিন কমপাইল করা
-          scons platform=ios target=editor arch=arm64 vsproj=no -j$(sysctl -n hw.logicalcpu)
+    - name: Create Unsigned IPA Structure
+      run: |
+        # Create the Payload directory required for iOS apps
+        mkdir -p Payload/Godot.app
+        
+        # Copy the compiled binary to the App bundle
+        cp bin/godot.ios.editor.arm64 Payload/Godot.app/Godot
+        
+        # Create a minimal Info.plist required for iOS to recognize the app
+        cat <<EOF > Payload/Godot.app/Info.plist
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+            <key>CFBundleDevelopmentRegion</key>
+            <string>en</string>
+            <key>CFBundleExecutable</key>
+            <string>Godot</string>
+            <key>CFBundleIdentifier</key>
+            <string>org.godotengine.godotioseditor</string>
+            <key>CFBundleInfoDictionaryVersion</key>
+            <string>6.0</string>
+            <key>CFBundleName</key>
+            <string>GodotEditor</string>
+            <key>CFBundlePackageType</key>
+            <string>APPL</string>
+            <key>CFBundleShortVersionString</key>
+            <string>4.3</string>
+            <key>CFBundleSignature</key>
+            <string>????</string>
+            <key>CFBundleVersion</key>
+            <string>1.0</string>
+            <key>LSRequiresIPhoneOS</key>
+            <true/>
+            <key>UIDeviceFamily</key>
+            <array>
+                <integer>1</integer>
+                <integer>2</integer>
+            </array>
+            <key>UILaunchStoryboardName</key>
+            <string>LaunchScreen</string>
+            <key>UISupportedInterfaceOrientations</key>
+            <array>
+                <string>UIInterfaceOrientationPortrait</string>
+                <string>UIInterfaceOrientationLandscapeLeft</string>
+                <string>UIInterfaceOrientationLandscapeRight</string>
+            </array>
+        </dict>
+        </plist>
+        EOF
 
-      - name: Generate Xcode Project & Build App Bundle
-        run: |
-          # গোডটের নিজস্ব বিল্ড স্ক্রিপ্ট ব্যবহার করে Xcode প্রজেক্ট স্ট্রাকচার তৈরি
-          cd platform/ios
-          # এখানে আমরা আনসাইনড বিল্ড নিশ্চিত করতে CODE_SIGNING_ALLOWED=NO ব্যবহার করব
-          xcodebuild -project godot_ios.xcodeproj \
-            -scheme "godot_ios" \
-            -configuration Release \
-            -sdk iphoneos \
-            CODE_SIGN_ONLY=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=NO \
-            CLEAN_BUILD_NO=YES \
-            build
+        # Fake sign the binary to allow certain sideloading tools (like TrollStore) to bypass codesign verification
+        ldid -S Payload/Godot.app/Godot || true
 
-      - name: Package Package as Unsigned IPA
-        run: |
-          # Xcode বিল্ড ডিরেক্টরি থেকে .app ফাইলটি খুঁজেPayload ফোল্ডারে নেওয়া
-          mkdir -p Payload
-          BUILD_DIR=$(xcodebuild -project platform/ios/godot_ios.xcodeproj -showBuildSettings | grep -m 1 "TARGET_BUILD_DIR" | awk '{print $3}')
-          
-          if [ -d "$BUILD_DIR/godot_ios.app" ]; then
-            cp -r "$BUILD_DIR/godot_ios.app" Payload/
-          else
-            # যদি ডিফল্ট পাথ না পাওয়া যায় তবে স্ট্যান্ডার্ড পাথে খোঁজা
-            cp -r ~/Library/Developer/Xcode/DerivedData/*/Build/Products/Release-iphoneos/*.app Payload/ 2>/dev/null || true
-          fi
-          
-          # জিপ করে .ipa ফাইলে রূপান্তর করা
-          zip -r Godot_iOS_Editor_Unsigned.ipa Payload
-          
-      - name: Upload IPA Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: Godot-iOS-Editor-Unsigned-IPA
-          path: Godot_iOS_Editor_Unsigned.ipa
-          retention-days: 7
+        # Zip the Payload into an IPA file
+        zip -r Godot_iOS_Editor.ipa Payload
+
+    - name: Upload Unsigned IPA Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: Godot_iOS_Unsigned_IPA
+        path: Godot_iOS_Editor.ipa

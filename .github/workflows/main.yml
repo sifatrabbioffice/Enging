@@ -1,8 +1,7 @@
 name: Build Godot iOS 3D Game
 
 on:
- push:
-  
+  push:
 
 jobs:
   build:
@@ -14,10 +13,10 @@ jobs:
           unzip godot.zip
           curl -L -o export_templates.tpz https://absinthe.tuxfamily.org/godotengine/3.5/Godot_v3.5-stable_export_templates.tpz
           mkdir -p ~/Library/Application\ Support/Godot/templates/3.5.stable
-          unzip export_templates.tpz -d export_templates
+          unzip -q export_templates.tpz -d export_templates
           cp -r export_templates/templates/* ~/Library/Application\ Support/Godot/templates/3.5.stable/
 
-      - name: Create a simple 3D game project
+      - name: Create a simple 3D game project with export preset
         run: |
           mkdir MyGame
           cat > MyGame/project.godot <<'EOF'
@@ -62,13 +61,39 @@ jobs:
               $Cube.rotate_y(delta)
           EOF
 
-      - name: Export iOS Xcode project (headless)
+          # Create export_presets.cfg with iOS preset
+          cat > MyGame/export_presets.cfg <<'EOF'
+          [preset.0]
+          name="iOS"
+          platform="iOS"
+          runnable=true
+          export_filter="all_resources"
+          include_filter=[]
+          exclude_filter=[]
+          export_path=""
+
+          [preset.0.options]
+          custom_template/debug=""
+          custom_template/release=""
+          architecture="arm64"
+          code_sign_identity="iPhone Developer"
+          export_icons_png=true
+          export_icons_macos=false
+          info_plist=""
+          info_plist_text="<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n<key>CFBundleIdentifier</key>\n<string>com.example.rotatingcube</string>\n<key>CFBundleName</key>\n<string>RotatingCube</string>\n<key>CFBundleVersion</key>\n<string>1.0</string>\n<key>CFBundleShortVersionString</key>\n<string>1.0</string>\n<key>UIRequiredDeviceCapabilities</key>\n<array>\n<string>armv7</string>\n</array>\n<key>UIDeviceFamily</key>\n<array>\n<integer>1</integer>\n<integer>2</integer>\n</array>\n</dict>\n</plist>"
+          info_plist_text_base64=""
+          ios/app_store_team_id=""
+          ios/code_sign_identity=""
+          ios/provisioning_profile_uuid=""
+          EOF
+
+      - name: Export iOS Xcode project
         run: |
           mkdir -p export
           chmod +x Godot.app/Contents/MacOS/Godot
           ./Godot.app/Contents/MacOS/Godot --path MyGame --export "iOS" export/MyGame.xcodeproj
 
-      - name: Build and archive the .ipa
+      - name: Build .ipa from Xcode project
         run: |
           cd export
           xcodebuild -project MyGame.xcodeproj -scheme MyGame -configuration Release \

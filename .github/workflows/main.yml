@@ -7,15 +7,14 @@ jobs:
   build:
     runs-on: macos-latest
     steps:
-      - name: Download Godot 3.6 editor and iOS templates
+      - name: Download Godot 3.4.2 editor (insecure SSL)
         run: |
-          # Use official downloads.tuxfamily.org (valid SSL)
-          curl -L -o godot.zip https://downloads.tuxfamily.org/godotengine/3.6/Godot_v3.6-stable_osx.universal.zip
+          curl -k -L -o godot.zip https://free.downloads.tuxfamily.net/godotengine/3.4.2/Godot_v3.4.2-stable_osx.universal.zip
           unzip godot.zip
-          curl -L -o ios_templates.zip https://downloads.tuxfamily.org/godotengine/3.6/Godot_v3.6-stable_ios.template.zip
+          curl -k -L -o ios_templates.zip https://free.downloads.tuxfamily.net/godotengine/3.4.2/Godot_v3.4.2-stable_ios.template.zip
           unzip ios_templates.zip
-          mkdir -p ~/Library/Application\ Support/Godot/templates/3.6.stable
-          cp -r iOS_*/* ~/Library/Application\ Support/Godot/templates/3.6.stable/
+          mkdir -p ~/Library/Application\ Support/Godot/templates/3.4.2.stable
+          cp -r iOS_*/* ~/Library/Application\ Support/Godot/templates/3.4.2.stable/
 
       - name: Create a simple 3D game project
         run: |
@@ -65,6 +64,8 @@ jobs:
       - name: Export iOS Xcode project (headless)
         run: |
           mkdir -p export
+          # Allow execution of Godot
+          chmod +x Godot.app/Contents/MacOS/Godot
           ./Godot.app/Contents/MacOS/Godot --path MyGame --export "iOS" export/MyGame.xcodeproj
 
       - name: Build and archive the .ipa

@@ -9,11 +9,12 @@ jobs:
     steps:
       - name: Download Godot 3.6 editor and iOS templates
         run: |
-          curl -L -o godot.zip https://free.downloads.tuxfamily.net/godotengine/3.4.2/Godot_v3.4.2-stable_osx.universal.zip
+          # Use official downloads.tuxfamily.org (valid SSL)
+          curl -L -o godot.zip https://downloads.tuxfamily.org/godotengine/3.6/Godot_v3.6-stable_osx.universal.zip
           unzip godot.zip
           curl -L -o ios_templates.zip https://downloads.tuxfamily.org/godotengine/3.6/Godot_v3.6-stable_ios.template.zip
           unzip ios_templates.zip
-          mkdir -p ~/Library/Application Support/Godot/templates/3.6.stable
+          mkdir -p ~/Library/Application\ Support/Godot/templates/3.6.stable
           cp -r iOS_*/* ~/Library/Application\ Support/Godot/templates/3.6.stable/
 
       - name: Create a simple 3D game project
@@ -74,7 +75,12 @@ jobs:
           cat > exportOptions.plist <<EOF
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0"><dict><key>method</key><string>development</string></dict></plist>
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>development</string>
+            <key>provisioningProfiles</key><dict/>
+          </dict>
+          </plist>
           EOF
           xcodebuild -exportArchive -archivePath MyGame.xcarchive -exportPath output \
                      -exportOptionsPlist exportOptions.plist

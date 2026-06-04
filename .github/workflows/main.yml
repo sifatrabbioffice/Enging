@@ -1,65 +1,81 @@
-name: Build Godot Engine for iOS
+name: Build Godot 3.6 Engine for iOS
 
 on:
-  workflow_dispatch:  # Manual trigger only – adjust as needed
+  workflow_dispatch:
 
 jobs:
   build-ios:
-    runs-on: macos-latest   # iOS builds require macOS
+    runs-on: macos-latest
     steps:
-      - name: Checkout Godot source
+      - name: Checkout Godot 3.6 source
         uses: actions/checkout@v4
         with:
           repository: godotengine/godot
-          ref: 4.2-stable   # Use stable branch, change as desired
+          ref: 3.6-stable
           submodules: recursive
 
-      - name: Setup Python and SCons
+      - name: Setup Python & SCons
         run: |
           python -m pip install --upgrade pip
           pip install scons
 
-      - name: Install iOS build dependencies
+      - name: Build iOS static library (GLES3, no Vulkan)
         run: |
-          # Install required system tools (xcodegen, etc.)
-          brew install yasm
+          scons platform=ios target=release_debug \
+                tools=no arch=arm64 \
+                vulkan=no \
+                builtin_libpng=yes \
+                builtin_zlib=yes \
+                use_llvm=yes \
+                ios_simulator=no
 
-      - name: Build for iOS (arm64 + simulator)
+      - name: Create minimal Xcode project and .ipa
         run: |
-          # Configure and build for iOS device (arm64) and simulator (x86_64)
-          scons platform=ios arch=arm64 target=template_release \
-                ios_simulator=no tools=no \
-                verbose=yes
-          scons platform=ios arch=x86_64 target=template_release \
-                ios_simulator=yes tools=no \
-                verbose=yes
-
-      - name: Create Xcode project and archive (.ipa)
-        run: |
-          # Use Godot's iOS build script to produce an .ipa
-          cd misc/dist/ios_xcode
-          xcodegen generate
-          xcodebuild -project godot.xcodeproj -scheme godot \
-                     -sdk iphoneos -configuration Release \
-                     -archivePath ./godot.xcarchive archive
-          xcodebuild -exportArchive -archivePath ./godot.xcarchive \
-                     -exportPath ./output -exportOptionsPlist exportOptions.plist
-          # exportOptions.plist must be present – create a minimal one:
-          echo '<?xml version="1.0" encoding="UTF-8"?>
+          # Create app bundle structure
+          mkdir -p Payload/Godot.app
+          cp -r bin/libgodot.ios.opt.debug.arm64.a Payload/Godot/
+          # Use a simple Info.plist
+          cat > Payload/Godot/Info.plist <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
           <dict>
-              <key>method</key>
-              <string>development</string>
-              <key>provisioningProfiles</key>
-              <dict/>
+            <key>CFBundleExecutable</key><string>Godot</string>
+            <key>CFBundleIdentifier</key><string>com.example.godot</string>
+            <key>CFBundleName</key><string>Godot</string>
+            <key>CFBundleVersion</key><string>1.0</string>
+            <key>CFBundleShortVersionString</key><string>1.0</string>
+            <key>MinimumOSVersion</key><string>12.0</string>
+            <key>UIDeviceFamily</key><array><integer>1</integer><integer>2</integer></array>
           </dict>
-          </plist>' > exportOptions.plist
-          xcodebuild -exportArchive -archivePath ./godot.xcarchive \
-                     -exportPath ./output -exportOptionsPlist exportOptions.plist
+          </plist>
+          EOF
+          # Compile a tiny stub main (actual engine entry point is in the .a)
+          cat > Payload/Godot/main.m <<EOF
+          #import <UIKit/UIKit.h>
+          int main(int argc, char *argv[]) {
+              @autoreleasepool {
+                  return UIApplicationMain(argc, argv, nil, @"GodotAppDelegate");
+              }
+          }
+          EOF
+          # Compile stub and link with the Godot static library
+          clang -arch arm64 -isysroot $(xcrun --sdk iphoneos --show-sdk-path) \
+                -miphoneos-version-min=12.0 -framework UIKit -framework OpenGLES \
+                -framework Metal -framework CoreAudio -framework Foundation \
+                Payload/Godot/main.m bin/libgodot.ios.opt.debug.arm64.a \
+                -o Payload/Godot/Godot
+          # Sign (adhoc) and create .ipa
+          mkdir -p Payload/Godot/_CodeSignature
+          codesign -s - --entitlements - Payload/Godot/Godot <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict><key>get-task-allow</key><false/></dict></plist>
+          EOF
+          zip -r Godot-iOS.ipa Payload
 
       - name: Upload .ipa artifact
         uses: actions/upload-artifact@v4
         with:
           name: Godot-iOS.ipa
-          path: output/*.ipa
+          path: Godot-iOS.ipa

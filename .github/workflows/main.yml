@@ -29,7 +29,6 @@ jobs:
 
       - name: Locate and copy static library
         run: |
-          # Find the generated .a file (Godot 3.6 names it like libgodot.ios.debug.arm64.a)
           LIB_PATH=$(find bin -name "*.a" | head -n 1)
           if [ -z "$LIB_PATH" ]; then
             echo "ERROR: No static library found in bin/"
@@ -37,17 +36,12 @@ jobs:
             exit 1
           fi
           echo "Found library: $LIB_PATH"
-          
-          # Create app bundle
-          APP_DIR="Payload/Godot.app"
-          mkdir -p "$APP_DIR"
-          cp "$LIB_PATH" "$APP_DIR/Godot"
+          mkdir -p Payload/Godot.app
+          cp "$LIB_PATH" Payload/Godot.app/Godot
 
-      - name: Create Info.plist and main.m stub
+      - name: Create Info.plist and main.m
         run: |
-          APP_DIR="Payload/Godot.app"
-          
-          cat > "$APP_DIR/Info.plist" <<EOF
+          cat > Payload/Godot.app/Info.plist <<EOF
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
@@ -81,19 +75,25 @@ jobs:
 
       - name: Compile and link
         run: |
-          APP_DIR="Payload/Godot.app"
           SDKROOT=$(xcrun --sdk iphoneos --show-sdk-path)
           clang -arch arm64 -isysroot "$SDKROOT" -miphoneos-version-min=12.0 \
                 -framework UIKit -framework OpenGLES -framework Metal \
                 -framework CoreAudio -framework Foundation -framework QuartzCore \
-                main.m "$APP_DIR/Godot" -o "$APP_DIR/Godot"
-          
-          # Ad-hoc sign
-          codesign -s - --entitlements - "$APP_DIR/Godot" <<EOF
+                main.m Payload/Godot.app/Godot -o Payload/Godot.app/Godot
+
+      - name: Sign the executable
+        run: |
+          # Write entitlements to a file
+          cat > entitlements.plist <<EOF
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0"><dict><key>get-task-allow</key><false/></dict></plist>
+          <plist version="1.0">
+          <dict>
+            <key>get-task-allow</key><false/>
+          </dict>
+          </plist>
           EOF
+          codesign -s - --entitlements entitlements.plist Payload/Godot.app/Godot
 
       - name: Package .ipa
         run: |

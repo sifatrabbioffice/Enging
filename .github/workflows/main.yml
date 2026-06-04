@@ -7,11 +7,12 @@ jobs:
   build:
     runs-on: macos-latest
     steps:
-      - name: Download Godot 3.4.2 editor (insecure SSL)
+      - name: Download Godot 3.4.2 editor and iOS templates
         run: |
-          curl -k -L -o godot.zip https://free.downloads.tuxfamily.net/godotengine/3.4.2/Godot_v3.4.2-stable_osx.universal.zip
+          # Use official downloads.tuxfamily.org (valid SSL, no -k needed)
+          curl -L -o godot.zip https://downloads.tuxfamily.org/godotengine/3.4.2/Godot_v3.4.2-stable_osx.universal.zip
           unzip godot.zip
-          curl -k -L -o ios_templates.zip https://free.downloads.tuxfamily.net/godotengine/3.4.2/Godot_v3.4.2-stable_ios.template.zip
+          curl -L -o ios_templates.zip https://downloads.tuxfamily.org/godotengine/3.4.2/Godot_v3.4.2-stable_ios.template.zip
           unzip ios_templates.zip
           mkdir -p ~/Library/Application\ Support/Godot/templates/3.4.2.stable
           cp -r iOS_*/* ~/Library/Application\ Support/Godot/templates/3.4.2.stable/
@@ -64,7 +65,6 @@ jobs:
       - name: Export iOS Xcode project (headless)
         run: |
           mkdir -p export
-          # Allow execution of Godot
           chmod +x Godot.app/Contents/MacOS/Godot
           ./Godot.app/Contents/MacOS/Godot --path MyGame --export "iOS" export/MyGame.xcodeproj
 

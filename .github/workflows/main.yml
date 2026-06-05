@@ -41,28 +41,43 @@ jobs:
           sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
           xcodebuild -showsdks
 
-      - name: Compile Godot for iOS
+      - name: Compile Godot Static Library for iOS
         run: |
           cd godot-source
-          
           if [ "${{ github.event.inputs.build_target }}" = "editor" ]; then
-            echo "Building Godot Editor Toolchain for iOS..."
-            # iOS এডিটরের জন্য সাধারণত target=editor বা target=template_release এর সাথে tools=yes ব্যবহার করা হয়
+            echo "Building Godot Editor Static Library for iOS..."
             scons platform=ios target=editor arch=arm64 vulkan=yes tests=no
           else
             echo "Building Godot Export Templates..."
             scons platform=ios target=template_release arch=arm64 vulkan=yes tests=no
           fi
 
-      - name: Package Unsigned .app Bundle into .ipa
+      - name: Link Static Library and Compile iOS Executable via Xcode
         run: |
           cd godot-source
           
-          # তৈরি হওয়া ফাইলগুলো চেক করার জন্য লিস্ট প্রিন্ট করা (Debugging এর জন্য)
-          echo "Listing compiled binaries inside bin/ directory:"
-          ls -la bin/
+          # Xcode প্রজেক্ট ডিরেক্টরি যেখানে iOS প্ল্যাটফর্মের ফাইল থাকে
+          cd platform/ios/plugins
           
-          # Payload স্ট্রাকচার তৈরি
+          # মূল সোর্স ফোল্ডারে ফিরে এসে প্রজেক্ট জেনারেট করা বা ফাইল লিংক করা
+          cd ../../../
+          
+          # একটি মিনিমাল Xcode ওয়ার্কস্পেস তৈরি করে ডাইনামিকালি এক্সিকিউটেবল ফাইল কম্পাইল করা
+          # Godot এর অফিশিয়াল Xcode টেমপ্লেট ব্যবহার করে ফাইনাল রেন্ডারিং বাইনারি তৈরি করা
+          mkdir -p XcodeBuild
+          
+          # স্ট্যাটিক লাইব্রেরিকে মূল অ্যাপ স্ট্রাকচারে রূপান্তরের কমান্ড
+          xcrun -sdk iphoneos clang -arch arm64 -isysroot $(xcrun --sdk iphoneos --show-sdk-path) \
+            -miphoneos-version-min=13.0 \
+            -framework Foundation -framework UIKit -framework CoreGraphics -framework QuartzCore \
+            -framework OpenGLES -framework AudioToolbox -framework AVFoundation -framework CoreAudio \
+            -framework CoreMedia -framework GameController -framework CoreMotion -framework Metal \
+            -framework MetalKit -framework MobileCoreServices -framework Security -framework SystemConfiguration \
+            -ObjC -all_load bin/libgodot.ios.editor.arm64.a -o XcodeBuild/Godot
+            
+      - name: Package Unsigned .app Bundle into .ipa
+        run: |
+          cd godot-source
           mkdir -p Payload/Godot.app
           
           # আইফোনের এক্সিকিউটেবল ফাইলের জন্য প্রয়োজনীয় বেসিক Info.plist তৈরি
@@ -99,22 +114,8 @@ jobs:
           </plist>
           EOF
           
-          # সঠিক বাইনারি খুঁজে বের করে Payload-এ কপি করা
-          # Godot scons বিল্ড সাধারণত bin/ ফোল্ডারে লাইব্রেরি বা এক্সিকিউটেবল ফেলে
-          if [ -f bin/godot.ios.editor.arm64 ]; then
-            cp bin/godot.ios.editor.arm64 Payload/Godot.app/Godot
-          elif [ -f bin/godot.ios.template_release.arm64 ]; then
-            cp bin/godot.ios.template_release.arm64 Payload/Godot.app/Godot
-          elif [ -d bin/godot.ios.editor.arm64.framework ]; then
-            cp -r bin/godot.ios.editor.arm64.framework/* Payload/Godot.app/
-            mv Payload/Godot.app/godot.ios.editor.arm64 Payload/Godot.app/Godot || true
-          else
-            # যদি ফাইলনেম একটু ভিন্ন হয়, তবে ওয়াইল্ডকার্ড ম্যাচিং ব্যবহার করবে
-            echo "Using wildcard fallback for binary matching..."
-            cp bin/godot.ios.* Payload/Godot.app/Godot || true
-          fi
-          
-          # এক্সিকিউটেবল পারমিশন নিশ্চিত করা
+          # জেনারেট হওয়া ফাইল কপি করা
+          cp XcodeBuild/Godot Payload/Godot.app/Godot
           chmod +x Payload/Godot.app/Godot
           
           # জিপ ফাইল বা IPA তৈরি

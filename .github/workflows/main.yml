@@ -1,101 +1,59 @@
-name: Build Godot Editor for iOS (Unsigned IPA)
+name: Build Godot iOS Editor (Unsigned IPA)
 
 on:
-  workflow_dispatch:   # manual trigger from GitHub Actions tab
+  workflow_dispatch:   # manual trigger from Actions tab
   push:
     branches: [ main ]
 
 jobs:
-  build-ios-editor:
-    runs-on: macos-14   # Apple Silicon runner (M1/M2), required for iOS arm64 builds
-    timeout-minutes: 120
+  build:
+    runs-on: macos-14   # Apple Silicon required for arm64 iOS builds
+    timeout-minutes: 180
 
     steps:
-      - name: Checkout Godot source
+      - name: Checkout godot-ios-editor (includes Godot submodule)
         uses: actions/checkout@v4
         with:
-          repository: godotengine/godot
-          ref: 4.2.2-stable        # use a stable release tag
+          repository: godotengine/godot-ios-editor
+          ref: main                # or a specific tag like v4.2.2
           submodules: recursive
           fetch-depth: 0
 
-      - name: Install build dependencies
+      - name: Install dependencies
         run: |
-          brew install scons
-          brew install cmake
-          # Additional dependencies for iOS compilation
-          brew install autoconf automake libtool pkg-config
-          # Ensure Xcode command line tools are set up (already present on macOS runner)
+          brew install scons cmake python@3.11
+          # Ensure Xcode command line tools are in place
           sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
 
-      - name: Download and prepare iOS toolchain
+      - name: Build Godot engine library for iOS
         run: |
-          # The official Godot iOS build uses the system SDK.
-          # We'll point to the iOS SDK included with Xcode.
-          export IOS_SDK_PATH=$(xcrun --sdk iphoneos --show-sdk-path)
-          echo "IOS_SDK_PATH=$IOS_SDK_PATH" >> $GITHUB_ENV
+          # The build.sh script downloads/updates the Godot submodule and builds
+          # the engine as a static library for iOS. It expects to be run from the repo root.
+          chmod +x build.sh
+          ./build.sh
 
-      - name: Build Godot editor for iOS (arm64)
+      - name: Build Xcode project (unsigned archive)
         run: |
-          scons platform=ios target=editor arch=arm64 \
-                ios_sdk_path="$IOS_SDK_PATH" \
-                tools=yes module_mono_enabled=no \
-                progress=yes -j$(sysctl -n hw.logicalcpu)
-          # The resulting binary is a .app bundle inside `bin/`
-          # Godot builds a `godot.ios.editor.arm64` binary; we need to wrap it.
+          # Clean and build the Xcode project without code signing
+          xcodebuild clean archive \
+            -project godot-ios-editor.xcodeproj \
+            -scheme godot-ios-editor \
+            -configuration Release \
+            -sdk iphoneos \
+            -archivePath ./build/godot-ios-editor.xcarchive \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO
 
-      - name: Create .app bundle structure
+      - name: Create unsigned .ipa
         run: |
-          mkdir -p GodotEditor.app
-          # Copy the editor binary into the app
-          cp bin/godot.ios.editor.arm64 GodotEditor.app/godot
-          # Create a minimal Info.plist
-          cat > GodotEditor.app/Info.plist <<EOF
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-              <key>CFBundleExecutable</key>
-              <string>godot</string>
-              <key>CFBundleIdentifier</key>
-              <string>org.godotengine.editor</string>
-              <key>CFBundleName</key>
-              <string>Godot Editor</string>
-              <key>CFBundleVersion</key>
-              <string>1.0</string>
-              <key>CFBundleShortVersionString</key>
-              <string>4.2.2</string>
-              <key>CFBundlePackageType</key>
-              <string>APPL</string>
-              <key>LSRequiresIPhoneOS</key>
-              <true/>
-              <key>UILaunchStoryboardName</key>
-              <string>LaunchScreen</string>
-              <key>UISupportedInterfaceOrientations</key>
-              <array>
-                  <string>UIInterfaceOrientationLandscapeLeft</string>
-                  <string>UIInterfaceOrientationLandscapeRight</string>
-                  <string>UIInterfaceOrientationPortrait</string>
-              </array>
-              <key>UIRequiredDeviceCapabilities</key>
-              <array>
-                  <string>arm64</string>
-              </array>
-          </dict>
-          </plist>
-          EOF
-          # Create an empty LaunchScreen storyboard (required)
-          mkdir -p GodotEditor.app/Base.lproj
-          touch GodotEditor.app/Base.lproj/LaunchScreen.storyboard
-
-      - name: Package as unsigned .ipa
-        run: |
+          # Extract the .app from the archive
           mkdir Payload
-          cp -R GodotEditor.app Payload/
+          cp -R ./build/godot-ios-editor.xcarchive/Products/Applications/godot-ios-editor.app Payload/
           zip -r GodotEditor.ipa Payload
           rm -rf Payload
 
-      - name: Upload unsigned IPA artifact
+      - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
         with:
           name: Godot-iOS-Editor-Unsigned

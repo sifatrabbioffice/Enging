@@ -34,37 +34,90 @@ jobs:
 
       - name: Install SCons via Homebrew
         run: |
-          brew install scons vulcan-headers
+          brew install scons
 
       - name: Set up Xcode SDK
         run: |
           sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
           xcodebuild -showsdks
 
-      - name: Compile Godot for iOS (Simulator & Device Architecture)
+      - name: Compile Godot for iOS
         run: |
           cd godot-source
           
           if [ "${{ github.event.inputs.build_target }}" = "editor" ]; then
-            echo "Building Godot Editor Toolchain..."
+            echo "Building Godot Editor Toolchain for iOS..."
+            # iOS এডিটরের জন্য সাধারণত target=editor বা target=template_release এর সাথে tools=yes ব্যবহার করা হয়
             scons platform=ios target=editor arch=arm64 vulkan=yes tests=no
           else
-            echo "Building Godot Export Templates (Release & Debug)..."
+            echo "Building Godot Export Templates..."
             scons platform=ios target=template_release arch=arm64 vulkan=yes tests=no
-            scons platform=ios target=template_debug arch=arm64 vulkan=yes tests=no
           fi
 
       - name: Package Unsigned .app Bundle into .ipa
         run: |
           cd godot-source
-          mkdir -p Payload
           
-          if [ "${{ github.event.inputs.build_target }}" = "editor" ]; then
-            cp -r bin/godot.ios.editor.arm64.framework Payload/GodotEditor.app || true
+          # তৈরি হওয়া ফাইলগুলো চেক করার জন্য লিস্ট প্রিন্ট করা (Debugging এর জন্য)
+          echo "Listing compiled binaries inside bin/ directory:"
+          ls -la bin/
+          
+          # Payload স্ট্রাকচার তৈরি
+          mkdir -p Payload/Godot.app
+          
+          # আইফোনের এক্সিকিউটেবল ফাইলের জন্য প্রয়োজনীয় বেসিক Info.plist তৈরি
+          cat <<EOF > Payload/Godot.app/Info.plist
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleDevelopmentRegion</key>
+              <string>English</string>
+              <key>CFBundleExecutable</key>
+              <string>Godot</string>
+              <key>CFBundleIdentifier</key>
+              <string>org.godotengine.godot</string>
+              <key>CFBundleInfoDictionaryVersion</key>
+              <string>6.0</string>
+              <key>CFBundleName</key>
+              <string>Godot</string>
+              <key>CFBundlePackageType</key>
+              <string>APPL</string>
+              <key>CFBundleShortVersionString</key>
+              <string>1.0</string>
+              <key>CFBundleSignature</key>
+              <string>????</string>
+              <key>CFBundleVersion</key>
+              <string>1.0</string>
+              <key>LSRequiresIPhoneOS</key>
+              <true/>
+              <key>UIRequiredDeviceCapabilities</key>
+              <array>
+                  <string>arm64</string>
+              </array>
+          </dict>
+          </plist>
+          EOF
+          
+          # সঠিক বাইনারি খুঁজে বের করে Payload-এ কপি করা
+          # Godot scons বিল্ড সাধারণত bin/ ফোল্ডারে লাইব্রেরি বা এক্সিকিউটেবল ফেলে
+          if [ -f bin/godot.ios.editor.arm64 ]; then
+            cp bin/godot.ios.editor.arm64 Payload/Godot.app/Godot
+          elif [ -f bin/godot.ios.template_release.arm64 ]; then
+            cp bin/godot.ios.template_release.arm64 Payload/Godot.app/Godot
+          elif [ -d bin/godot.ios.editor.arm64.framework ]; then
+            cp -r bin/godot.ios.editor.arm64.framework/* Payload/Godot.app/
+            mv Payload/Godot.app/godot.ios.editor.arm64 Payload/Godot.app/Godot || true
           else
-            cp -r bin/godot.ios.template_release.arm64.framework Payload/GodotTemplate.app || true
+            # যদি ফাইলনেম একটু ভিন্ন হয়, তবে ওয়াইল্ডকার্ড ম্যাচিং ব্যবহার করবে
+            echo "Using wildcard fallback for binary matching..."
+            cp bin/godot.ios.* Payload/Godot.app/Godot || true
           fi
           
+          # এক্সিকিউটেবল পারমিশন নিশ্চিত করা
+          chmod +x Payload/Godot.app/Godot
+          
+          # জিপ ফাইল বা IPA তৈরি
           zip -r ../godot-ios-unsigned.ipa Payload
 
       - name: Upload Unsigned IPA Binary Artifact

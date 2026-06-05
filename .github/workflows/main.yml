@@ -1,60 +1,85 @@
-name: Build Godot iOS Editor (Unsigned IPA)
+name: Export Godot Game to iOS (Unsigned IPA)
 
 on:
-  workflow_dispatch:   # manual trigger from Actions tab
+  workflow_dispatch: # Manual trigger
   push:
-    branches: [ main ]
+
+env:
+  GODOT_VERSION: "4.2.1"                  # Change to your Godot version
+  EXPORT_NAME: "MyGodotGame"              # The name of your game/export preset
 
 jobs:
-  build:
-    runs-on: macos-14   # Apple Silicon required for arm64 iOS builds
-    timeout-minutes: 180
+  build-ios:
+    runs-on: macos-14
+    timeout-minutes: 40
 
     steps:
-      - name: Checkout godot-ios-editor (includes Godot submodule)
+      - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          repository: godotengine/godot-ios-editor
-          ref: main                # or a specific tag like v4.2.2
-          submodules: recursive
-          fetch-depth: 0
 
-      - name: Install dependencies
+      - name: Setup Xcode version
         run: |
-          brew install scons cmake python@3.11
-          # Ensure Xcode command line tools are in place
-          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          sudo xcode-select -switch /Applications/Xcode_15.2.app
+          xcodebuild -version
 
-      - name: Build Godot engine library for iOS
+      - name: Download Godot Engine and Export Templates
         run: |
-          # The build.sh script downloads/updates the Godot submodule and builds
-          # the engine as a static library for iOS. It expects to be run from the repo root.
-          chmod +x build.sh
-          ./build.sh
+          # Download headless Godot editor for macOS
+          curl -LO https://github.com/godotengine/godot/releases/download/${{ env.GODOT_VERSION }}-stable/Godot_v${{ env.GODOT_VERSION }}-stable_macos.universal.zip
+          unzip Godot_v${{ env.GODOT_VERSION }}-stable_macos.universal.zip
+          mv Godot.app /Applications/Godot.app
+          
+          # Setup export templates directory path
+          mkdir -p ~/Library/Application\ Support/Godot/export_templates/${{ env.GODOT_VERSION }}.stable
+          
+          # Download templates
+          curl -LO https://github.com/godotengine/godot/releases/download/${{ env.GODOT_VERSION }}-stable/Godot_v${{ env.GODOT_VERSION }}-stable_export_templates.tpz
+          unzip Godot_v${{ env.GODOT_VERSION }}-stable_export_templates.tpz
+          
+          # Move templates to the proper structural location
+          mv templates/* ~/Library/Application\ Support/Godot/export_templates/${{ env.GODOT_VERSION }}.stable/
+          rm -rf templates Godot_v${{ env.GODOT_VERSION }}-stable_export_templates.tpz
 
-      - name: Build Xcode project (unsigned archive)
+      - name: Create Export Directory
+        run: mkdir -p build/ios
+
+      - name: Godot Headless Export to Xcode Project
         run: |
-          # Clean and build the Xcode project without code signing
-          xcodebuild clean archive \
-            -project godot-ios-editor.xcodeproj \
-            -scheme godot-ios-editor \
-            -configuration Release \
-            -sdk iphoneos \
-            -archivePath ./build/godot-ios-editor.xcarchive \
-            CODE_SIGN_IDENTITY="" \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=NO
+          # Note: Ensure you have an export preset named exactly "iOS" in your export_presets.cfg
+          /Applications/Godot.app/Contents/MacOS/Godot --headless --path . --export-release "iOS" build/ios/${{ env.EXPORT_NAME }}.xcodeproj
 
-      - name: Create unsigned .ipa
+      - name: Compile Xcode Project (No Code Signing)
         run: |
-          # Extract the .app from the archive
-          mkdir Payload
-          cp -R ./build/godot-ios-editor.xcarchive/Products/Applications/godot-ios-editor.app Payload/
-          zip -r GodotEditor.ipa Payload
-          rm -rf Payload
+          cd build/ios
+          xcodebuild -project ${{ env.EXPORT_NAME }}.xcodeproj \
+                     -scheme ${{ env.EXPORT_NAME }} \
+                     -configuration Release \
+                     -sdk iphoneos \
+                     DEFAULT_PREFERENCES_DOMAIN=com.mycompany.${{ env.EXPORT_NAME }} \
+                     CODE_SIGNING_ALLOWED=NO \
+                     CODE_SIGNING_REQUIRED=NO \
+                     CODE_SIGN_IDENTITY="" \
+                     ONLY_ACTIVE_ARCH=NO \
+                     -allowProvisioningUpdates \
+                     clean build
 
-      - name: Upload IPA artifact
+      - name: Package App Bundle into Physical IPA
+        run: |
+          # Create the Payload environment structure iOS expects
+          mkdir -p Packaging/Payload
+          
+          # Locate the compiled .app bundle and copy it into the Payload folder
+          APP_PATH=$(find build/ios/build/Release-iphoneos/ -name "*.app" -type d | head -1)
+          cp -r "$APP_PATH" Packaging/Payload/
+          
+          # Compress the Payload folder into a physical .ipa file
+          cd Packaging
+          zip -r ../${{ env.EXPORT_NAME }}.ipa Payload
+          cd ..
+
+      - name: Upload Finished IPA Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Godot-iOS-Editor-Unsigned
-          path: GodotEditor.ipa
+          name: ${{ env.EXPORT_NAME }}-iOS-Unsigned
+          path: ${{ env.EXPORT_NAME }}.ipa
+          retention-days: 7

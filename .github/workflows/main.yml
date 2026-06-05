@@ -2,11 +2,9 @@ name: Export Godot Game to iOS (Unsigned IPA)
 
 on:
   workflow_dispatch: # Manual trigger
-  push:
 
 env:
   GODOT_VERSION: "4.2.1"                  # Change to your Godot version
-  EXPORT_NAME: "MyGodotGame"              # The name of your game/export preset
 
 jobs:
   build-ios:
@@ -24,19 +22,15 @@ jobs:
 
       - name: Download Godot Engine and Export Templates
         run: |
-          # Download headless Godot editor for macOS
           curl -LO https://github.com/godotengine/godot/releases/download/${{ env.GODOT_VERSION }}-stable/Godot_v${{ env.GODOT_VERSION }}-stable_macos.universal.zip
           unzip Godot_v${{ env.GODOT_VERSION }}-stable_macos.universal.zip
           mv Godot.app /Applications/Godot.app
           
-          # Setup export templates directory path
           mkdir -p ~/Library/Application\ Support/Godot/export_templates/${{ env.GODOT_VERSION }}.stable
           
-          # Download templates
           curl -LO https://github.com/godotengine/godot/releases/download/${{ env.GODOT_VERSION }}-stable/Godot_v${{ env.GODOT_VERSION }}-stable_export_templates.tpz
           unzip Godot_v${{ env.GODOT_VERSION }}-stable_export_templates.tpz
           
-          # Move templates to the proper structural location
           mv templates/* ~/Library/Application\ Support/Godot/export_templates/${{ env.GODOT_VERSION }}.stable/
           rm -rf templates Godot_v${{ env.GODOT_VERSION }}-stable_export_templates.tpz
 
@@ -45,17 +39,32 @@ jobs:
 
       - name: Godot Headless Export to Xcode Project
         run: |
-          # Note: Ensure you have an export preset named exactly "iOS" in your export_presets.cfg
-          /Applications/Godot.app/Contents/MacOS/Godot --headless --path . --export-release "iOS" build/ios/${{ env.EXPORT_NAME }}.xcodeproj
+          /Applications/Godot.app/Contents/MacOS/Godot --headless --path . --export-release "iOS" build/ios/export_output.xcodeproj
 
       - name: Compile Xcode Project (No Code Signing)
         run: |
           cd build/ios
-          xcodebuild -project ${{ env.EXPORT_NAME }}.xcodeproj \
-                     -scheme ${{ env.EXPORT_NAME }} \
+          
+          # 1. Dynamically locate whatever .xcodeproj Godot generated
+          XCODE_PROJ=$(find . -name "*.xcodeproj" -type d | head -1)
+          
+          if [ -z "$XCODE_PROJ" ]; then
+            echo "::error::No .xcodeproj found! Ensure your export_presets.cfg is committed to your repository and contains an 'iOS' preset configuration."
+            ls -la
+            exit 1
+          fi
+          
+          # 2. Extract the actual scheme name from the file system
+          SCHEME_NAME=$(basename "$XCODE_PROJ" .xcodeproj)
+          echo "Found Project: $XCODE_PROJ"
+          echo "Extracted Scheme: $SCHEME_NAME"
+          
+          # 3. Compile and explicitly dump outputs locally via -derivedDataPath
+          xcodebuild -project "$XCODE_PROJ" \
+                     -scheme "$SCHEME_NAME" \
                      -configuration Release \
                      -sdk iphoneos \
-                     DEFAULT_PREFERENCES_DOMAIN=com.mycompany.${{ env.EXPORT_NAME }} \
+                     -derivedDataPath build \
                      CODE_SIGNING_ALLOWED=NO \
                      CODE_SIGNING_REQUIRED=NO \
                      CODE_SIGN_IDENTITY="" \
@@ -65,21 +74,26 @@ jobs:
 
       - name: Package App Bundle into Physical IPA
         run: |
-          # Create the Payload environment structure iOS expects
           mkdir -p Packaging/Payload
           
-          # Locate the compiled .app bundle and copy it into the Payload folder
-          APP_PATH=$(find build/ios/build/Release-iphoneos/ -name "*.app" -type d | head -1)
+          # Dynamically search the export folder for the compiled .app bundle
+          APP_PATH=$(find build/ios/ -name "*.app" -type d | head -1)
+          
+          if [ -z "$APP_PATH" ]; then
+            echo "::error::Could not find the compiled .app binary package!"
+            exit 1
+          fi
+          
+          echo "Packaging application bundle from path: $APP_PATH"
           cp -r "$APP_PATH" Packaging/Payload/
           
-          # Compress the Payload folder into a physical .ipa file
           cd Packaging
-          zip -r ../${{ env.EXPORT_NAME }}.ipa Payload
+          zip -r ../GodotGame.ipa Payload
           cd ..
 
       - name: Upload Finished IPA Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.EXPORT_NAME }}-iOS-Unsigned
-          path: ${{ env.EXPORT_NAME }}.ipa
+          name: GodotGame-iOS-Unsigned
+          path: GodotGame.ipa
           retention-days: 7

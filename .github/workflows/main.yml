@@ -1,99 +1,75 @@
-name: Build Godot Engine for iOS (Sideload Ready)
+name: Build Godot Engine for iOS (Unsigned)
 
 on:
   workflow_dispatch:
     inputs:
       godot_version:
-        description: 'Godot Branch/Tag to clone'
+        description: 'Godot Branch/Tag to build (e.g., 4.2, 4.3-stable, master)'
         required: true
         default: '4.3-stable'
+      build_target:
+        description: 'Build Target (editor = Run Godot Editor on iOS, template = Game Export Template)'
+        required: true
+        default: 'editor'
+        type: choice
+        options:
+          - editor
+          - template
 
 jobs:
   build-ios:
     runs-on: macos-14
-    
     steps:
-    - name: Checkout Godot Source
-      uses: actions/checkout@v4
-      with:
-        repository: 'godotengine/godot'
-        ref: ${{ github.event.inputs.godot_version }}
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
-    - name: Set up Homebrew Dependencies
-      run: |
-        brew install scons python
+      - name: Clone Godot Engine Source
+        run: |
+          git clone --depth 1 --branch ${{ github.event.inputs.godot_version }} https://github.com/godotengine/godot.git godot-source
 
-    - name: Cache SCons Dependencies
-      uses: actions/cache@v4
-      with:
-        path: ~/.cache/scons
-        key: ${{ runner.os }}-godot-ios-${{ github.event.inputs.godot_version }}
+      - name: Set up Python and Dependencies
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
 
-    - name: Compile Godot for iOS (ARM64 Simulator/Device)
-      run: |
-        # Target ios, architecture arm64, editing support enabled (tools=yes)
-        # Note: Godot officially limits 'tools=yes' on iOS, but we force compilation flags here
-        scons platform=ios target=editor arch=arm64 tools=yes tests=no -j$(sysctl -n hw.logicalcpu)
+      - name: Install SCons via Homebrew
+        run: |
+          brew install scons vulcan-headers
 
-    - name: Create Unsigned IPA Structure
-      run: |
-        # Create the Payload directory required for iOS apps
-        mkdir -p Payload/Godot.app
-        
-        # Copy the compiled binary to the App bundle
-        cp bin/godot.ios.editor.arm64 Payload/Godot.app/Godot
-        
-        # Create a minimal Info.plist required for iOS to recognize the app
-        cat <<EOF > Payload/Godot.app/Info.plist
-        <?xml version="1.0" encoding="UTF-8"?>
-        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-        <plist version="1.0">
-        <dict>
-            <key>CFBundleDevelopmentRegion</key>
-            <string>en</string>
-            <key>CFBundleExecutable</key>
-            <string>Godot</string>
-            <key>CFBundleIdentifier</key>
-            <string>org.godotengine.godotioseditor</string>
-            <key>CFBundleInfoDictionaryVersion</key>
-            <string>6.0</string>
-            <key>CFBundleName</key>
-            <string>GodotEditor</string>
-            <key>CFBundlePackageType</key>
-            <string>APPL</string>
-            <key>CFBundleShortVersionString</key>
-            <string>4.3</string>
-            <key>CFBundleSignature</key>
-            <string>????</string>
-            <key>CFBundleVersion</key>
-            <string>1.0</string>
-            <key>LSRequiresIPhoneOS</key>
-            <true/>
-            <key>UIDeviceFamily</key>
-            <array>
-                <integer>1</integer>
-                <integer>2</integer>
-            </array>
-            <key>UILaunchStoryboardName</key>
-            <string>LaunchScreen</string>
-            <key>UISupportedInterfaceOrientations</key>
-            <array>
-                <string>UIInterfaceOrientationPortrait</string>
-                <string>UIInterfaceOrientationLandscapeLeft</string>
-                <string>UIInterfaceOrientationLandscapeRight</string>
-            </array>
-        </dict>
-        </plist>
-        EOF
+      - name: Set up Xcode SDK
+        run: |
+          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          xcodebuild -showsdks
 
-        # Fake sign the binary to allow certain sideloading tools (like TrollStore) to bypass codesign verification
-        ldid -S Payload/Godot.app/Godot || true
+      - name: Compile Godot for iOS (Simulator & Device Architecture)
+        run: |
+          cd godot-source
+          
+          if [ "${{ github.event.inputs.build_target }}" = "editor" ]; then
+            echo "Building Godot Editor Toolchain..."
+            scons platform=ios target=editor arch=arm64 vulkan=yes tests=no
+          else
+            echo "Building Godot Export Templates (Release & Debug)..."
+            scons platform=ios target=template_release arch=arm64 vulkan=yes tests=no
+            scons platform=ios target=template_debug arch=arm64 vulkan=yes tests=no
+          fi
 
-        # Zip the Payload into an IPA file
-        zip -r Godot_iOS_Editor.ipa Payload
+      - name: Package Unsigned .app Bundle into .ipa
+        run: |
+          cd godot-source
+          mkdir -p Payload
+          
+          if [ "${{ github.event.inputs.build_target }}" = "editor" ]; then
+            cp -r bin/godot.ios.editor.arm64.framework Payload/GodotEditor.app || true
+          else
+            cp -r bin/godot.ios.template_release.arm64.framework Payload/GodotTemplate.app || true
+          fi
+          
+          zip -r ../godot-ios-unsigned.ipa Payload
 
-    - name: Upload Unsigned IPA Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: Godot_iOS_Unsigned_IPA
-        path: Godot_iOS_Editor.ipa
+      - name: Upload Unsigned IPA Binary Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: godot-ios-${{ github.event.inputs.build_target }}-${{ github.event.inputs.godot_version }}
+          path: godot-ios-unsigned.ipa
+          retention-days: 7
